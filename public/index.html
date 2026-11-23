@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Run Explorer · ReplayBench Results</title>
+  <link rel="stylesheet" href="assets/explorer.css">
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <p class="brand">ReplayBench Results</p>
+      <h1>Run Explorer</h1>
+      <p id="overview" role="status">Loading benchmark data…</p>
+    </div>
+  </header>
+  <main class="wrap">
+    <div class="release panel">
+      <label>Snapshot<select id="snapshot" disabled><option value="">Latest release</option></select></label>
+      <a href="data/benchmark.md">Latest Markdown summary</a>
+      <p id="release-status" class="sub" role="status"></p>
+    </div>
+    <form id="filters" class="filters panel" role="search" aria-label="Filter Runs">
+      <label class="search">Search<input id="search" type="search" placeholder="Model, Task, Run ID, or critical failure"></label>
+      <label>Track<select id="track"></select></label>
+      <label>Model<select id="model"></select></label>
+      <label>Task<select id="task"></select></label>
+      <label>Verifier<select id="verifier"></select></label>
+      <label>Backend<select id="backend"></select></label>
+      <label>Hardware<select id="gpu"></select></label>
+      <label>Quantization<select id="quantization"></select></label>
+      <label>Execution status<select id="execution-status"></select></label>
+      <label>Sort<select id="sort">
+        <option value="newest">Newest first</option>
+        <option value="model">Model A–Z</option>
+        <option value="score">Score within benchmark</option>
+      </select></label>
+    </form>
+    <div class="toolbar">
+      <div>
+        <h2>Runs</h2>
+        <p id="count" class="sub" aria-live="polite"></p>
+        <p id="sort-note" class="sub" role="status"></p>
+      </div>
+      <div class="actions">
+        <span id="selection" class="sub" aria-live="polite"></span>
+        <button type="button" id="clear-selection" hidden>Clear selection</button>
+        <button type="button" id="compare" disabled>Compare Runs</button>
+      </div>
+    </div>
+    <div id="runs"></div>
+    <p class="panel" id="empty" hidden></p>
+    <details class="panel" id="model-cards">
+      <summary>Model Cards</summary>
+      <div class="cards" id="cards"></div>
+    </details>
+  </main>
+  <dialog id="detail" aria-labelledby="detail-title">
+    <div class="toolbar">
+      <h2 id="detail-title"></h2>
+      <form method="dialog"><button type="submit" autofocus>Close</button></form>
+    </div>
+    <div id="detail-content"></div>
+  </dialog>
+  <script src="assets/explorer.js" defer></script>
+</body>
+</html>
