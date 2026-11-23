@@ -47,6 +47,9 @@ class PublisherTests(unittest.TestCase):
     def run_release(self, day=None):
         return publish(self.registry, self.out, self.audit_path, day or self.generation)
 
+    def release_files(self):
+        return {path.relative_to(self.out): path.read_bytes() for path in self.out.rglob("*") if path.is_file()}
+
     def test_allowlist_and_execution_results(self):
         failed = sample("two", "pi_agent", execution={"status": "timeout"}, result={"score": None})
         self.source([sample("one"), failed, sample("test", "self_test")])
@@ -92,8 +95,9 @@ class PublisherTests(unittest.TestCase):
         self.run_release()
         data = self.out / "data"
         before = (data / "latest.json").read_bytes()
-        for text in (r"C:\Users\private\archive", "192.168.1.20", "Bearer private-credential",
-                     "person@example.com", "sk-fakecredential12345", "/home/private/run"):
+        for text in (r"C:\Users\private\archive", "/home/private/run", "192.168.1.20", "127.0.0.1", "8.8.8.8",
+                     "relay.1.1.1.1-west", "Model relay 8.8.4.4.", "Bearer private-credential",
+                     "person@example.com", "sk-fakecredential12345"):
             with self.subTest(text=text):
                 self.source([sample("bad", model={"declared": text})])
                 with self.assertRaisesRegex(ValueError, "Privacy audit failed"):
@@ -101,10 +105,43 @@ class PublisherTests(unittest.TestCase):
                 audit = json.loads(self.audit_path.read_bytes())
                 self.assertEqual(audit["published_record_count"], 0)
                 self.assertIsNone(audit["public_data_sha256"])
-                self.assertEqual(audit["privacy_violations"][0]["field"], "model.declared")
+                self.assertEqual(audit["privacy_violations"], [
+                    {"field": "model.declared", "reason": "Possible private value", "record_index": 1}
+                ])
                 self.assertNotIn(text, self.audit_path.read_text(encoding="utf-8"))
                 self.assertEqual((data / "latest.json").read_bytes(), before)
         self.assertEqual(len(list((data / "snapshots").iterdir())), 1)
+
+    def test_backend_version_wrapper_checks_extracted_value(self):
+        def version(label):
+            return f"0.00.000.127 I srv  llama_server: initializing ...\nversion: {label} (build 5, commit abc123)"
+
+        self.source([sample("safe", backend={"version": version("1.2.3")})])
+        self.run_release()
+        records = json.loads((self.out / "data" / "latest.json").read_bytes())["records"]
+        self.assertEqual(records[0]["backend"]["version"], "1.2.3 (build 5, commit abc123)")
+        self.source([sample("bad", backend={"version": version("8.8.8.8")})])
+        with self.assertRaisesRegex(ValueError, "Privacy audit failed"):
+            self.run_release()
+        audit = json.loads(self.audit_path.read_bytes())
+        self.assertEqual(audit["privacy_violations"], [
+            {"field": "backend.version", "reason": "Possible private value", "record_index": 1}
+        ])
+
+    def test_empty_and_self_test_only_registries_preserve_release(self):
+        self.source([sample("one")])
+        self.run_release()
+        self.source([sample("two", "pi_agent")])
+        self.run_release(self.generation.replace(day=24))
+        before = self.release_files()
+        audit_before = self.audit_path.read_bytes()
+        for records in ([], [sample("self-test", "self_test")]):
+            with self.subTest(records=len(records)):
+                self.source(records)
+                with self.assertRaisesRegex(ValueError, "No eligible Direct Model or Pi Agent records"):
+                    self.run_release()
+                self.assertEqual(self.release_files(), before)
+                self.assertEqual(self.audit_path.read_bytes(), audit_before)
 
     def test_repeat_history_and_immutable_snapshot_collision(self):
         self.source([sample("one")])
@@ -125,6 +162,37 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(snapshot_file.read_bytes(), b"changed")
         self.assertEqual((data / "catalog.json").read_bytes(), json.dumps(catalog, indent=2, sort_keys=True).encode() + b"\n")
 
+    def test_reused_snapshot_rejects_corrupt_manifest_metadata(self):
+        self.source([sample("one")])
+        first = self.run_release()["snapshot_id"]
+        self.source([sample("two")])
+        self.run_release(self.generation.replace(day=24))
+        manifest_path = self.out / "data" / "snapshots" / first / "manifest.json"
+        original = json.loads(manifest_path.read_bytes())
+        self.source([sample("one")])
+        for field, value in {
+            "task_coverage": [], "verifier_coverage": [], "track_distribution": {"pi_agent": 1},
+            "record_count": 2, "snapshot_id": "2026-11-23-abcdef123456", "data_sha256": "d" * 64,
+            "generated_at_utc": "2026-11-23T01:00:00Z",
+        }.items():
+            with self.subTest(field=field):
+                manifest_path.write_text(json.dumps({**original, field: value}), encoding="utf-8")
+                before = self.release_files()
+                message = "manifest and catalog disagree" if field == "generated_at_utc" else f"invalid manifest {field}"
+                with self.assertRaisesRegex(ValueError, message):
+                    self.run_release(self.generation.replace(day=25))
+                self.assertEqual(self.release_files(), before)
+
+    def test_reused_snapshot_preserves_original_source_digest(self):
+        self.source([sample("one")])
+        first = self.run_release()
+        before = self.release_files()
+        self.source([sample("one"), sample("new-self-test", "self_test")])
+        second = self.run_release(self.generation.replace(day=24))
+        self.assertEqual(second["snapshot_id"], first["snapshot_id"])
+        self.assertNotEqual(second["source_registry_sha256"], first["source_registry_sha256"])
+        self.assertEqual(self.release_files(), before)
+
     @unittest.skipUnless(os.environ.get("REPLAYBENCH_ACCEPTANCE_EXPORT"), "Set REPLAYBENCH_ACCEPTANCE_EXPORT to run")
     def test_frozen_acceptance_export(self):
         self.registry = Path(os.environ["REPLAYBENCH_ACCEPTANCE_EXPORT"])
@@ -142,6 +210,9 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual(Counter(r["track"] for r in records), {"direct_model": 38, "pi_agent": 7})
         self.assertEqual(Counter(r["execution"]["status"] for r in records),
                          {"completed": 30, "adapter_error": 5, "incomplete": 4, "output_limit": 3, "timeout": 3})
+        scores = [r["result"]["score"] for r in records]
+        self.assertEqual((len(scores) - scores.count(None), scores.count(None), scores.count(0)), (30, 15, 4))
+        self.assertEqual(Counter(r["result"]["strict_pass"] for r in records), {True: 5, False: 25, None: 15})
         for run in records:
             original = expected[run["run_id"]]
             self.assertEqual(run["result"]["score"], original["result"]["score"])

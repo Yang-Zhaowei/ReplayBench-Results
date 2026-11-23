@@ -21,7 +21,7 @@ uv run --no-project python tools/publish_release.py --input 'C:\path\to\registry
 uv run --no-project python -m http.server 8000 --bind 127.0.0.1 --directory .review/public
 ```
 
-Review `.review/privacy-audit.json`, the Markdown summary, the new snapshot and its manifest. The audit records included and omitted field paths, counts, detected violations, and the SHA-256 of the exact public JSON bytes. The publisher aborts on privacy violations and preserves the source file. The field and format checks catch common leaks. Review the remaining identifiers and labels for organization-specific private values before any public push, including to PR branches.
+Review `.review/privacy-audit.json`, the Markdown summary, the new snapshot and its manifest. The audit records included and omitted field paths, counts, detected violations, and the SHA-256 of the exact public JSON bytes. The publisher rejects privacy violations and releases with zero eligible Runs. It flags IPv4 addresses in public text fields, including globally routable addresses. Publishing an IPv4 address would require a separate policy change and explicit review. Review the remaining identifiers and labels for organization-specific private values before any public push, including to PR branches.
 
 After approval, copy only the reviewed data artifacts from `.review/public/data/` to `public/data/`. Inspect the Git diff, verify that the new snapshot and `latest.json` share the manifest hash, and open a data-only pull request. The local audit and the source export stay outside `public/` and Git. Website updates use the same `public/` directory and can ship independently of data.
 
@@ -31,6 +31,12 @@ uv run --no-project python -m unittest discover -s tests -v
 ```
 
 To include the frozen acceptance test, set `REPLAYBENCH_ACCEPTANCE_EXPORT` to the path of the accepted 61-record JSON before running the suite. The test reads that export and creates its release in a temporary directory.
+
+GitHub Actions runs the browser smoke test with Chrome on Ubuntu 24.04 using synthetic releases. For an optional local run, pass the installed Chrome or Edge executable to Node.js.
+
+```powershell
+node tests/browser_smoke.mjs 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+```
 
 ## Public schema v1
 

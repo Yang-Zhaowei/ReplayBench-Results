@@ -41,7 +41,7 @@ PRIVATE = re.compile(
     r"-----BEGIN .*PRIVATE KEY-----|\[?[0-9a-f]{0,4}::[0-9a-f:]+)",
     re.IGNORECASE,
 )
-IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+IPV4 = re.compile(r"(?<![0-9])(?=((?:[0-9]{1,3}\.){3}[0-9]{1,3})(?![0-9]))")
 SAFE_REASONS = (
     "Incorrect value", "Incorrect epistemic status", "Fabricated or noncontiguous quote",
     "Missing relevant evidence", "Missing evidence coverage", "Incomplete evidence chain",
@@ -119,11 +119,10 @@ def private_text(text, username):
         return True
     for match in IPV4.finditer(text):
         try:
-            address = ipaddress.ip_address(match[0])
-        except ValueError:
+            ipaddress.IPv4Address(match[1])
+        except ipaddress.AddressValueError:
             continue
-        if not address.is_global:
-            return True
+        return True
     return False
 
 
@@ -140,7 +139,7 @@ class Projection:
         if rule == "version":
             wrapper = LLAMA_VERSION.fullmatch(reading) if isinstance(reading, str) else None
             if wrapper:
-                return wrapper["version"]
+                reading = wrapper["version"]
             rule = VERSION_LABEL
         if rule == "cache":
             if isinstance(reading, dict):
@@ -321,13 +320,26 @@ def write_release(data, content, records, checksum, source_checksum, generated):
         if target.exists() or previous:
             if not target.is_dir() or (target / "benchmark.json").read_bytes() != content:
                 raise ValueError(f"Snapshot {snapshot} differs from the generated data")
-            saved = json.loads((target / "manifest.json").read_bytes())
-            if (saved.get("public_schema_version") != SCHEMA or saved.get("snapshot_id") != snapshot
-                    or saved.get("data_sha256") != checksum or saved.get("record_count") != len(records)
-                    or not SHA256.fullmatch(saved.get("source_registry_sha256", ""))
-                    or not TIMESTAMP.fullmatch(saved.get("generated_at_utc", ""))):
-                raise ValueError(f"Snapshot {snapshot} has an invalid manifest")
-            entry["generated_at_utc"] = saved["generated_at_utc"]
+            saved = object_value(json.loads((target / "manifest.json").read_bytes()))
+            for field, expected in manifest.items():
+                if field not in ("source_registry_sha256", "generated_at_utc") and (
+                    json_bytes(saved.get(field)) != json_bytes(expected)
+                ):
+                    raise ValueError(f"Snapshot {snapshot} has invalid manifest {field}")
+            # The manifest preserves the provenance and timestamp of the original release.
+            source_digest = saved.get("source_registry_sha256")
+            if not isinstance(source_digest, str) or not SHA256.fullmatch(source_digest):
+                raise ValueError(f"Snapshot {snapshot} has invalid manifest source_registry_sha256")
+            created = saved.get("generated_at_utc")
+            if not isinstance(created, str) or not TIMESTAMP.fullmatch(created):
+                raise ValueError(f"Snapshot {snapshot} has invalid manifest generated_at_utc")
+            created_at = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            if created_at.utcoffset() != timezone.utc.utcoffset(None) or created[:10] != snapshot[:10]:
+                raise ValueError(f"Snapshot {snapshot} has invalid manifest generated_at_utc")
+            entry["generated_at_utc"] = created
+            catalog_entry = next((item for item in entries if item["snapshot_id"] == snapshot), None)
+            if catalog_entry is not None and catalog_entry != entry:
+                raise ValueError(f"Snapshot {snapshot} manifest and catalog disagree")
         else:
             snapshots.mkdir(exist_ok=True)
             temporary = snapshots / f".snapshot-{uuid4().hex}"
@@ -382,6 +394,8 @@ def publish(input_path, out, audit_path, generated=None):
             eligible.append((index, record))
         else:
             excluded[track] += 1
+    if not eligible:
+        raise ValueError("No eligible Direct Model or Pi Agent records")
     username = next((item for parent, item in zip(input_path.parts, input_path.parts[1:])
                      if parent.lower() in {"users", "home"}), None)
     violations = []

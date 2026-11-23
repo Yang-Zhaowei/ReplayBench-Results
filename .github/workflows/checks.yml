@@ -1,0 +1,22 @@
+name: Checks
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Publisher tests
+        run: python -m unittest discover -s tests -v
+      - name: Explorer JavaScript syntax
+        run: node --check public/assets/explorer.js
+      - name: Explorer browser smoke test
+        run: node tests/browser_smoke.mjs google-chrome
