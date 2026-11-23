@@ -22,19 +22,22 @@
     </div>
     <form id="filters" class="filters panel" role="search" aria-label="Filter Runs">
       <label class="search">Search<input id="search" type="search" placeholder="Model, Task, Run ID, or critical failure"></label>
-      <label>Track<select id="track"></select></label>
-      <label>Model<select id="model"></select></label>
-      <label>Task<select id="task"></select></label>
-      <label>Verifier<select id="verifier"></select></label>
-      <label>Backend<select id="backend"></select></label>
-      <label>Hardware<select id="gpu"></select></label>
-      <label>Quantization<select id="quantization"></select></label>
-      <label>Execution status<select id="execution-status"></select></label>
-      <label>Sort<select id="sort">
-        <option value="newest">Newest first</option>
-        <option value="model">Model A–Z</option>
-        <option value="score">Score within benchmark</option>
-      </select></label>
+      <button id="filter-toggle" type="button" aria-expanded="false" aria-controls="filter-options">Filters and sorting</button>
+      <div id="filter-options">
+        <label>Track<select id="track"></select></label>
+        <label>Model<select id="model"></select></label>
+        <label>Task<select id="task"></select></label>
+        <label>Verifier<select id="verifier"></select></label>
+        <label>Backend<select id="backend"></select></label>
+        <label>Hardware<select id="gpu"></select></label>
+        <label>Quantization<select id="quantization"></select></label>
+        <label>Execution status<select id="execution-status"></select></label>
+        <label>Sort<select id="sort">
+          <option value="newest">Newest first</option>
+          <option value="model">Model A–Z</option>
+          <option value="score">Score within benchmark</option>
+        </select></label>
+      </div>
     </form>
     <div class="toolbar">
       <div>

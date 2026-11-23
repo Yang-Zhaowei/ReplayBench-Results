@@ -8,6 +8,7 @@ const trackViews = new Map();
 let records = [];
 const formatNumber = new Intl.NumberFormat("en", {maximumFractionDigits: 6});
 const formatPercent = new Intl.NumberFormat("en", {style: "percent", maximumFractionDigits: 2});
+const formatSummaryNumber = new Intl.NumberFormat("en", {maximumFractionDigits: 3});
 
 function node(tag, text, className) {
   const element = document.createElement(tag);
@@ -31,6 +32,7 @@ const verifierName = run => run.verifier.name
   ? `${run.verifier.name} · ${value(run.verifier.revision)}`
   : `Verifier ${run.verifier.identity_sha256.slice(0, 8)} · revision unknown`;
 const trackName = run => trackNames[run.track] ?? run.track;
+const statusLabel = status => status.replaceAll("_", " ");
 const failures = run => run.result.critical_failures;
 const failureDetails = run => run.result.critical_failure_details ?? [];
 const score = run => run.result.score === null ? "Unavailable" : value(run.result.score);
@@ -44,7 +46,7 @@ const filters = {
   backend: [run => value(run.backend.name)],
   gpu: [run => value(hardwareName(run))],
   quantization: [run => value(run.model.quantization)],
-  "execution-status": [run => run.execution.status]
+  "execution-status": [run => run.execution.status, statusLabel]
 };
 
 function populateFilters() {
@@ -214,15 +216,17 @@ function runTable(rows) {
     if (run.metadata_flags?.length) identity.append(node("span", "Metadata review", "sub notice"));
     row.insertCell().append(node("span", taskName(run)), node("span", verifierName(run), "sub"));
     row.insertCell().append(node("span", value(run.backend.name)), node("span", value(hardwareName(run)), "sub"));
-    row.insertCell().append(node("span", value(run.execution.status), "status"));
+    row.insertCell().append(node("span", statusLabel(run.execution.status), "status"));
     const result = row.insertCell();
     result.append(node("strong", score(run)));
     if (run.result.strict_pass !== null) {
       const pass = run.result.strict_pass;
       result.append(node("span", pass ? "Pass" : "Fail", `sub ${pass ? "pass" : "fail"}`));
     }
-    row.insertCell().textContent = value(run.server.generation_tokens_per_second, " tok/s");
-    row.insertCell().textContent = value(run.execution.client_wall_seconds, " s");
+    for (const [reading, unit] of [[run.server.generation_tokens_per_second, " tok/s"],
+      [run.execution.client_wall_seconds, " s"]]) {
+      row.insertCell().textContent = reading == null ? "Unknown" : formatSummaryNumber.format(reading) + unit;
+    }
     for (const [index, cell] of [...row.cells].entries()) {
       cell.setAttribute("role", "cell");
       if (index > 1) {
@@ -232,13 +236,17 @@ function runTable(rows) {
       }
     }
     const search = [run.run_id, run.subject.id, modelName(run), run.model.observed, taskName(run), verifierName(run),
-      run.backend.name, hardwareName(run), run.model.quantization, run.execution.status, ...(failures(run) ?? []),
+      run.backend.name, hardwareName(run), run.model.quantization, run.execution.status,
+      statusLabel(run.execution.status), ...(failures(run) ?? []),
       ...failureDetails(run).map(detail => detail.dimension)].join(" ").toLowerCase();
     entries.set(run, {row, toggle, search});
     body.append(row);
   }
   table.append(body);
-  const container = node("div", undefined, "table-wrap");
+  const container = node("div", undefined, "table-wrap run-list");
+  container.tabIndex = 0;
+  container.setAttribute("role", "region");
+  container.setAttribute("aria-label", trackName(rows[0]) + " Runs");
   container.append(table);
   return {container, body, entries, order: rows};
 }
@@ -249,7 +257,8 @@ function newest(a, b) {
 }
 
 function sameBenchmark(rows) {
-  return rows.length > 0 && rows.every(run => run.result.score != null && sameEvaluation(run, rows[0]));
+  return rows.length > 0 && rows.every(run => run.result.score != null && run.verifier.name && run.verifier.revision
+    && sameEvaluation(run, rows[0]));
 }
 
 function sameTask(a, b) {
@@ -376,6 +385,7 @@ function renderCards(models) {
       get("search").value = "";
       get("model").value = name;
       render();
+      get("filter-toggle").setAttribute("aria-expanded", "true");
       get("model").focus();
     });
     card.append(node("h3", name), node("p", `${runs.length} Runs · ${distinct(trackName)}`, "sub"),
@@ -477,6 +487,10 @@ get("snapshot").addEventListener("change", async event => {
 });
 
 get("filters").addEventListener("submit", event => event.preventDefault());
+get("filter-toggle").addEventListener("click", event => {
+  const button = event.currentTarget;
+  button.setAttribute("aria-expanded", button.getAttribute("aria-expanded") !== "true");
+});
 for (const id of Object.keys(filters)) get(id).addEventListener("change", render);
 get("search").addEventListener("input", render);
 get("sort").addEventListener("change", render);
