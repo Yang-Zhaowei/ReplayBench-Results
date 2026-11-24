@@ -1,5 +1,12 @@
 {
+  "latest_snapshot_id": "2026-11-24-90e589f5b7ff",
   "public_schema_version": 1,
-  "latest_snapshot_id": null,
-  "snapshots": []
+  "snapshots": [
+    {
+      "data_sha256": "90e589f5b7ff7eaa6fa05abe4f5cb14ec268ccb291e6fe27313b8415b3b711e5",
+      "generated_at_utc": "2026-11-24T08:32:13Z",
+      "record_count": 40,
+      "snapshot_id": "2026-11-24-90e589f5b7ff"
+    }
+  ]
 }

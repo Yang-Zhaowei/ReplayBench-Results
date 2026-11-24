@@ -1,0 +1,101 @@
+{
+  "data_sha256": "90e589f5b7ff7eaa6fa05abe4f5cb14ec268ccb291e6fe27313b8415b3b711e5",
+  "generated_at_utc": "2026-11-24T08:32:13Z",
+  "public_schema_version": 1,
+  "record_count": 40,
+  "snapshot_id": "2026-11-24-90e589f5b7ff",
+  "source_registry_sha256": "3e22ec427364d8cf73051d32af49254785fbd1afc7fb23c2c809ec1719e8bb29",
+  "task_coverage": [
+    {
+      "id": "article-csv-atomic-import-001",
+      "manifest_sha256": "fb6416403e96496354849549704b43d4af43a08c3d83f4f35d21bd5be79bc001",
+      "version": "0.2.0-candidate"
+    },
+    {
+      "id": "article-review-score-count-001",
+      "manifest_sha256": "18c657f3aa371ed4c75af5f1d9aaae25481f27f537586000832155808438a263",
+      "version": "0.2.0-candidate"
+    },
+    {
+      "id": "bilibili-comment-parser-001",
+      "manifest_sha256": "468e24f7096c76c0297f6393b9badd8089f86d5921c0e3e046c9465cf551d8fe",
+      "version": "0.1.0-candidate"
+    },
+    {
+      "id": "bilibili-comment-parser-001",
+      "manifest_sha256": "dfb67779608270b8bb8a897d3e289444510e620c23eaa995b17922a010d31ec4",
+      "version": "0.2.0-candidate"
+    },
+    {
+      "id": "homelab-windows-s3-ssh-reset-001",
+      "manifest_sha256": "4db7d3e5a6811bdf8f8908dd50a782c0dab9d3598e4672da0333c670e4796093",
+      "version": "1.0.0"
+    },
+    {
+      "id": "homelab-windows-s3-ssh-reset-001",
+      "manifest_sha256": "e7dc543503d4e74c2ee3b16f2abbcf4a905d901a0319ea6ed4c9e040ffc0f88b",
+      "version": "2.0.0"
+    },
+    {
+      "id": "homelab-windows-s3-ssh-reset-001",
+      "manifest_sha256": "2ae0265a324c4702f7b710dd65e960bfbe48c8b18df1f864b52000b34d3d4553",
+      "version": "3.0.0"
+    }
+  ],
+  "track_distribution": {
+    "direct_model": 33,
+    "pi_agent": 7
+  },
+  "verifier_coverage": [
+    {
+      "identity_sha256": "00ba408bc3f444c1590a9dcbc0b38629230bac9ea1edb12481afc613eccdfaa6",
+      "name": null,
+      "revision": null
+    },
+    {
+      "identity_sha256": "1172a5adba1f16ce984b40bd3fae74dfcd8cb7785fb21e5bad154b10455d4528",
+      "name": "comment-parser-candidate",
+      "revision": "0.1.0-candidate"
+    },
+    {
+      "identity_sha256": "144fc019fe163dfe7c9066175d230173579de4353aadb19ab0a86bff075079d9",
+      "name": null,
+      "revision": null
+    },
+    {
+      "identity_sha256": "45fa9343d1cd278b30d3ed05d38afdbd07864d18a1078c60cd00b2f4017f4928",
+      "name": "engineering-candidate-v2",
+      "revision": "0.2.0-candidate"
+    },
+    {
+      "identity_sha256": "550a7711bf32c9b665ce780846f9db9d4662addc3a0a169e5134de157d7ac9be",
+      "name": "comment-parser-candidate-v2",
+      "revision": "0.2.0-candidate"
+    },
+    {
+      "identity_sha256": "bf95a3b59d1ef686fd7f6ae5d887dafde2bfc406988669c034949f0ab024e60b",
+      "name": "structured-evidence-v3",
+      "revision": "3.0.0"
+    },
+    {
+      "identity_sha256": "db032b627ac7755bd33e456c2f33f76f6b123555d8c6ae5abde288acf9b5b526",
+      "name": null,
+      "revision": null
+    },
+    {
+      "identity_sha256": "df44e313d00816e781684539c7df0d518e25674092f4687847b729d87a0203ce",
+      "name": "structured-evidence-v2",
+      "revision": "2.0.0"
+    },
+    {
+      "identity_sha256": "efea70a43d2d89324dc9d0a3c70344aa5a1f6f7bcd5e403eeb4253956812e226",
+      "name": null,
+      "revision": null
+    },
+    {
+      "identity_sha256": "f03edb586f7db94859b76901a1428e24f60fa242216667a6ba00cc2ae6e10eb2",
+      "name": "structured-evidence-v1",
+      "revision": null
+    }
+  ]
+}
