@@ -38,6 +38,12 @@ GitHub Actions runs the browser smoke test with Chrome on Ubuntu 24.04 using syn
 node tests/browser_smoke.mjs 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
 ```
 
+### Historical hardware annotations
+
+Optionally pass `--hardware-overlay .review/hardware-overlay.json` to the publisher. The local JSON has exactly two keys: `source_registry_sha256` (the SHA-256 of the untouched Registry export) and `runs` (a mapping from exact eligible Run IDs to confirmed hardware fields). Allowed fields: `cpu`, `gpu`, `vram_gb`, `ram_gb`, `memory_type`. Only missing or null fields are filled; conflicting non-null values, unknown or ineligible Run IDs, and mismatched source hashes reject the release. Keep the overlay and audit outside `public/` and retain them for reproducibility.
+
+`hardware.source` preserves the original Registry source. `hardware.operator_confirmed_fields` identifies exactly the fields filled from the overlay; these are retrospective operator confirmations, not observed runtime measurements. The audit records the overlay SHA-256, per-Run filled fields, and excluded execution-status counts. To exercise the historical overlay in the frozen acceptance test, also set `REPLAYBENCH_ACCEPTANCE_HARDWARE_OVERLAY` to its path.
+
 ## Public schema v1
 
 `data/latest.json` and every snapshot's `benchmark.json` have two top-level fields, `public_schema_version` and `records`. Optional measurements and metadata can be null. The [publisher's field allowlist](tools/publish_release.py) defines the public types and the permitted source leaves.
@@ -45,13 +51,13 @@ node tests/browser_smoke.mjs 'C:\Program Files (x86)\Microsoft\Edge\Application\
 | Record group | Public content |
 | --- | --- |
 | Identity | Run ID, track, Subject ID, exact Task ID/version and manifest/source/input hashes, candidate flag, verifier name/revision and identity hash |
-| Model and environment | Declared, requested and reported model, revision, quantization, GPU model, VRAM and RAM, backend name and version, agent name and version |
+| Model and environment | Declared, requested and reported model, revision, quantization, GPU model, VRAM, RAM, CPU, memory type, original hardware source and operator-confirmed fields, backend name and version, agent name and version |
 | Execution and evaluation | Start time, execution status, score, strict pass, critical check identifiers, dimensions and approved summaries |
 | Configuration | Declared context and reasoning, allowlisted settings, effective context and reasoning budget, and whether reasoning content was observed |
 | Measurements | Client and verifier durations, token and cache counters, server prompt and generation rates, draft counters and acceptance rate, and agent counters |
 | Metadata flags | A flagged discrepancy can coexist with the original Subject and declared model values |
 
-`direct_model` and `pi_agent` are separate tracks. The publisher selects both regardless of execution status. Candidate versions retain their original Task identity and carry an explicit flag based on the source version's `-candidate` suffix. Score sorting and comparison require recorded scores and a matching track, exact Task and input, and complete matching verifier identity and revision. The verifier hash covers the source entry point, name, and revision. Configuration values and runtime observations are shown alongside the scores. Null scores remain unavailable. The Registry v1 export does not include dimension scores, so the Explorer shows failure dimensions when available.
+`direct_model` and `pi_agent` are separate tracks. The publisher selects only `completed`, `incomplete`, `timeout` and `output_limit` Runs from those tracks. `adapter_error`, other statuses and `self_test` are excluded from the public release, not deleted from the private Registry. Retained execution failures are not model scores. Candidate versions retain their original Task identity and carry an explicit flag based on the source version's `-candidate` suffix. Score sorting and comparison require recorded scores and a matching track, exact Task and input, and complete matching verifier identity and revision. The verifier hash covers the source entry point, name, and revision. Configuration values and runtime observations are shown alongside the scores. Null scores remain unavailable. The Registry v1 export does not include dimension scores, so the Explorer shows failure dimensions when available.
 
 The publisher writes an immutable `data/snapshots/<snapshot-id>/` containing `benchmark.json` and `manifest.json`. The ID uses the UTC release date and 12 characters of the data SHA-256. The manifest records the full data and source export digests, counts, and coverage. Republishing identical data reuses its existing ID and manifest. The catalog points to the latest snapshot and lists earlier releases. The Explorer fetches those earlier datasets on demand.
 

@@ -39,6 +39,8 @@ const latest = {public_schema_version: 1, records: [
   record("first-run", 0.8, "2026-01-02T00:00:00Z"),
   record("second-run", 0.6, "2026-01-01T00:00:00Z", "alternate")
 ]};
+latest.records[0].hardware = {gpu: "RTX 4070", vram_gb: 12, ram_gb: 32, cpu: "Intel Core i7-13700KF",
+  memory_type: "DDR5", source: "declared", operator_confirmed_fields: ["cpu", "memory_type", "ram_gb"]};
 const older = {public_schema_version: 1, records: [record("historical-run", 0.9, "2025-12-01T00:00:00Z")]};
 const snapshot = "2026-01-01-0123456789ab";
 const root = new URL("../", import.meta.url);

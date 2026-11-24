@@ -17,6 +17,8 @@ from uuid import uuid4
 
 SCHEMA = 1
 TRACKS = {"direct_model": "Direct Model", "pi_agent": "Pi Agent"}
+ELIGIBLE_STATUSES = {"completed", "incomplete", "timeout", "output_limit"}
+HARDWARE_FIELDS = {"cpu", "gpu", "vram_gb", "ram_gb", "memory_type"}
 SHA256 = re.compile(r"[a-f0-9]{64}")
 SNAPSHOT_ID = re.compile(r"\d{4}-\d{2}-\d{2}-[a-f0-9]{12}")
 IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,119}")
@@ -71,7 +73,8 @@ ALLOWLIST = {
     "model": {"declared": MODEL, "requested": MODEL, "observed": MODEL, "revision": IDENTITY,
               "quantization": LABEL, "context_window": "number", "reasoning": REASONING},
     "backend": {"name": LABEL, "version": "version"},
-    "hardware": {"gpu": LABEL, "vram_gb": "number", "ram_gb": "number"},
+    "hardware": {"gpu": LABEL, "vram_gb": "number", "ram_gb": "number",
+                 "cpu": LABEL, "memory_type": LABEL, "source": IDENTITY},
     "agent": {"name": LABEL, "version": LABEL, "model_invocation_count": "number",
               "tool_call_count": "number", "tool_error_count": "number", "retry_count": "number"},
     "execution": {"status": IDENTITY, "started_at": TIMESTAMP, "adapter_seconds": "number",
@@ -126,12 +129,53 @@ def private_text(text, username):
     return False
 
 
+def load_hardware_overlay(path, source_digest, eligible):
+    """Load explicit Run-ID annotations bound to the unmodified Registry bytes."""
+    if path is None:
+        return {}, None
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate key in hardware overlay")
+            result[key] = value
+        return result
+
+    raw = path.read_bytes()
+    overlay = object_value(json.loads(raw, object_pairs_hook=unique_object))
+    if (set(overlay) != {"source_registry_sha256", "runs"}
+            or overlay.get("source_registry_sha256") != source_digest
+            or not isinstance(overlay["runs"], dict)):
+        raise ValueError("Invalid hardware overlay or source Registry hash mismatch")
+    by_id = {record["run_id"]: record for _, record in eligible}
+    for run_id, fields in overlay["runs"].items():
+        if run_id not in by_id:
+            raise ValueError(f"Hardware overlay references an unknown or ineligible Run: {run_id}")
+        if not isinstance(fields, dict) or not fields or not fields.keys() <= HARDWARE_FIELDS:
+            raise ValueError(f"Invalid hardware overlay fields for {run_id}")
+        hardware = object_value(by_id[run_id].get("hardware"))
+        for field, value in fields.items():
+            if field in {"ram_gb", "vram_gb"}:
+                valid = type(value) is int and value > 0
+            else:
+                valid = isinstance(value, str) and bool(value)
+            if not valid:
+                raise ValueError(f"Invalid hardware overlay value for {run_id}: {field}")
+            original = hardware.get(field)
+            if original is not None and original != value:
+                raise ValueError(f"Hardware overlay conflict for {run_id}: {field}")
+    return overlay["runs"], digest(raw)
+
+
 class Projection:
-    def __init__(self, records, username, violations):
+    def __init__(self, records, username, violations, hardware_overlay=None):
         self.records = records
         self.username = username
         self.violations = violations
         self.included = set()
+        self.hardware_overlay = hardware_overlay or {}
+        self.hardware_enrichment = {}
 
     def leaf(self, reading, rule, field):
         if reading is None:
@@ -186,7 +230,16 @@ class Projection:
 
     def run(self, source, index):
         self.index = index
+        # Copy only the record and hardware group being enriched. Never modify source data.
+        original_hardware = object_value(source.get("hardware"))
+        filled = {field: value for field, value in self.hardware_overlay.get(source["run_id"], {}).items()
+                  if original_hardware.get(field) is None}
+        if filled:
+            source = {**source, "hardware": {**original_hardware, **filled}}
+            self.hardware_enrichment[source["run_id"]] = sorted(filled)
         public = self.fields(source, ALLOWLIST)
+        # The original source remains intact; only filled fields get retrospective provenance.
+        public["hardware"]["operator_confirmed_fields"] = sorted(filled)
         task, verifier = public["task"], public["verifier"]
         entry_point = self.leaf(object_value(source.get("verifier")).get("entry_point"), ENTRY_POINT, "verifier.entry_point")
         required = (public["run_id"], public["subject"]["id"], public["execution"]["status"], *task.values(), entry_point)
@@ -256,7 +309,9 @@ def markdown(snapshot, records):
 
     lines = ["# ReplayBench benchmark results", "", f"Snapshot `{snapshot}` · {len(records)} archived Runs", "",
              "Compare scores within the same track, exact Task and input, and matching verifier identity and revision.",
-             "An em dash marks unavailable data. Execution status and strict pass are recorded independently.", ""]
+             "An em dash marks unavailable data. Execution status and strict pass are recorded independently.",
+             "Adapter errors and self-tests are excluded from public releases. Retained execution failures are not model scores.",
+             "Hardware values may include operator-confirmed annotations; see the Run details for field provenance.", ""]
     for track, label in TRACKS.items():
         rows = [r for r in records if r["track"] == track]
         if not rows:
@@ -364,13 +419,18 @@ def write_release(data, content, records, checksum, source_checksum, generated):
         lock.rmdir()
 
 
-def publish(input_path, out, audit_path, generated=None):
+def publish(input_path, out, audit_path, generated=None, hardware_overlay=None):
     input_path, out, audit_path = (Path(path).resolve() for path in (input_path, out, audit_path))
     data = (out / "data").resolve()
     if input_path.is_relative_to(out) or input_path.is_relative_to(data):
         raise ValueError("Keep the source Registry outside the public output directory")
     if audit_path.is_relative_to(out) or audit_path.is_relative_to(data) or audit_path == input_path:
         raise ValueError("Keep the privacy audit outside the public output directory and source Registry file")
+    if hardware_overlay is not None:
+        hardware_overlay = Path(hardware_overlay).resolve()
+        if (hardware_overlay.is_relative_to(out) or hardware_overlay.is_relative_to(data)
+                or hardware_overlay in {input_path, audit_path}):
+            raise ValueError("Keep the hardware overlay separate from the public output, Registry and audit")
     raw = input_path.read_bytes()
     registry = object_value(json.loads(raw))
     if registry.get("kind") != "replaybench_registry" or registry.get("format_version") != 1:
@@ -380,6 +440,7 @@ def publish(input_path, out, audit_path, generated=None):
         raise ValueError("Expected Registry records and issues arrays")
     seen = set()
     excluded = Counter()
+    excluded_status = Counter()
     eligible = []
     for index, record in enumerate(source_records, 1):
         record = object_value(record)
@@ -390,16 +451,23 @@ def publish(input_path, out, audit_path, generated=None):
             raise ValueError(f"Duplicate Run ID at record {index}")
         seen.add(run_id)
         track = record["track"]
-        if track in TRACKS:
-            eligible.append((index, record))
-        else:
+        if track not in TRACKS:
             excluded[track] += 1
+            continue
+        status = object_value(record.get("execution")).get("status")
+        if not isinstance(status, str) or not IDENTITY.fullmatch(status):
+            raise ValueError(f"Record {index} is missing a valid execution status")
+        if status not in ELIGIBLE_STATUSES:
+            excluded_status[status] += 1
+            continue
+        eligible.append((index, record))
     if not eligible:
         raise ValueError("No eligible Direct Model or Pi Agent records")
     username = next((item for parent, item in zip(input_path.parts, input_path.parts[1:])
                      if parent.lower() in {"users", "home"}), None)
     violations = []
-    projection = Projection(eligible, username, violations)
+    overlay, overlay_checksum = load_hardware_overlay(hardware_overlay, digest(raw), eligible)
+    projection = Projection(eligible, username, violations, overlay)
     records = projection.project()
     content = None if violations else json_bytes({"public_schema_version": SCHEMA, "records": records})
     checksum = digest(content) if content is not None else None
@@ -408,6 +476,10 @@ def publish(input_path, out, audit_path, generated=None):
         "input_record_count": len(source_records), "published_record_count": 0,
         "eligible_record_count": len(records), "excluded_track_count": sum(excluded.values()),
         "excluded_track_distribution": dict(excluded),
+        "excluded_status_count": sum(excluded_status.values()),
+        "excluded_status_distribution": dict(excluded_status),
+        "hardware_overlay_sha256": overlay_checksum,
+        "operator_confirmed_hardware_fields": projection.hardware_enrichment,
         "excluded_invalid_archive_count": sum(issue.get("reason") == "invalid_archive" for issue in issues),
         "included_public_fields": sorted(projection.included),
         "omitted_source_record_fields": sorted(source_fields - projection.included),
@@ -430,14 +502,17 @@ def main():
     parser.add_argument("--input", required=True, type=Path, help="ReplayBench Registry JSON export")
     parser.add_argument("--out", required=True, type=Path, help="Static output root, such as public")
     parser.add_argument("--audit", default=Path(".review/privacy-audit.json"), type=Path, help="Local audit report")
+    parser.add_argument("--hardware-overlay", type=Path,
+                        help="Local operator-confirmed Run-ID hardware annotations bound to the source hash")
     args = parser.parse_args()
     try:
-        audit = publish(args.input, args.out, args.audit)
+        audit = publish(args.input, args.out, args.audit, hardware_overlay=args.hardware_overlay)
     except (ValueError, KeyError, TypeError, OSError) as error:
         print(f"Release failed: {error}", file=sys.stderr)
         return 1
     print(f"{audit['snapshot_id']}: {audit['published_record_count']} of {audit['input_record_count']} records; "
           f"{audit['excluded_track_count']} excluded by track; "
+          f"{audit['excluded_status_count']} excluded by execution status; "
           f"{audit['excluded_invalid_archive_count']} invalid archives reported upstream.")
     print(f"SHA-256: {audit['public_data_sha256']}")
     return 0
