@@ -155,8 +155,12 @@ function showRun(run) {
       ["Reported model", value(run.model.observed)],
       ["Model revision", value(run.model.revision)], ["Declared quantization", value(run.model.quantization)],
       ["Subject", value(run.subject.id)], ["Declared backend", value(run.backend.name)],
-      ["Backend version", value(run.backend.version)], ["Declared GPU", value(hardwareName(run))],
+      ["Backend version", value(run.backend.version)], ["GPU", value(hardwareName(run))],
       ["VRAM", value(run.hardware.vram_gb, " GB")], ["RAM", value(run.hardware.ram_gb, " GB")],
+      ["CPU", value(run.hardware.cpu)], ["Memory type", value(run.hardware.memory_type)],
+      ["Original hardware source", value(run.hardware.source)],
+      ["Operator-confirmed fields", run.hardware.operator_confirmed_fields?.join(", ") ||
+        (run.hardware.operator_confirmed_fields ? "None" : "Unknown")],
       ["Agent", value(run.agent.name)], ["Agent version", value(run.agent.version)]
     ]),
     ...detailGroup("Runtime configuration", runtimeConfiguration(run)),

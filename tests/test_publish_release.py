@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from tools.publish_release import publish
+from tools.publish_release import ELIGIBLE_STATUSES, publish
 
 
 def sample(run_id, track="direct_model", **fields):
@@ -44,8 +44,15 @@ class PublisherTests(unittest.TestCase):
                                              "records": records, "issues": [{"reason": "invalid_archive"}]}),
                                  encoding="utf-8")
 
-    def run_release(self, day=None):
-        return publish(self.registry, self.out, self.audit_path, day or self.generation)
+    def run_release(self, day=None, hardware_overlay=None):
+        return publish(self.registry, self.out, self.audit_path, day or self.generation,
+                       hardware_overlay=hardware_overlay)
+
+    def overlay(self, runs, source_hash=None):
+        path = self.registry.parent / "hardware-overlay.json"
+        path.write_text(json.dumps({"source_registry_sha256": source_hash or hashlib.sha256(self.registry.read_bytes()).hexdigest(),
+                                    "runs": runs}), encoding="utf-8")
+        return path
 
     def release_files(self):
         return {path.relative_to(self.out): path.read_bytes() for path in self.out.rglob("*") if path.is_file()}
@@ -135,7 +142,8 @@ class PublisherTests(unittest.TestCase):
         self.run_release(self.generation.replace(day=24))
         before = self.release_files()
         audit_before = self.audit_path.read_bytes()
-        for records in ([], [sample("self-test", "self_test")]):
+        for records in ([], [sample("self-test", "self_test")],
+                        [sample("failed", execution={"status": "adapter_error"})]):
             with self.subTest(records=len(records)):
                 self.source(records)
                 with self.assertRaisesRegex(ValueError, "No eligible Direct Model or Pi Agent records"):
@@ -193,6 +201,71 @@ class PublisherTests(unittest.TestCase):
         self.assertNotEqual(second["source_registry_sha256"], first["source_registry_sha256"])
         self.assertEqual(self.release_files(), before)
 
+    def test_public_execution_eligibility(self):
+        self.source([sample(status, execution={"status": status}) for status in
+                     ("completed", "incomplete", "timeout", "output_limit", "adapter_error", "future_status")]
+                    + [sample("self-test", "self_test", execution={"status": "adapter_error"})])
+        audit = self.run_release()
+        records = json.loads((self.out / "data" / "latest.json").read_bytes())["records"]
+        self.assertEqual({r["execution"]["status"] for r in records}, ELIGIBLE_STATUSES)
+        self.assertEqual(audit["excluded_status_distribution"], {"adapter_error": 1, "future_status": 1})
+        self.assertEqual(audit["excluded_track_distribution"], {"self_test": 1})
+
+    def test_hardware_overlay_fills_only_missing_fields(self):
+        self.source([sample("one", hardware={"gpu": "RTX 4070", "source": "declared"}), sample("two")])
+        before = self.registry.read_bytes()
+        baseline = self.run_release()
+        original = {r["run_id"]: r for r in json.loads((self.out / "data" / "latest.json").read_bytes())["records"]}
+        overlay = self.overlay({"one": {"gpu": "RTX 4070", "cpu": "Intel Core i7-13700KF", "ram_gb": 32}})
+        overlay_before = overlay.read_bytes()
+        audit = self.run_release(hardware_overlay=overlay)
+        records = json.loads((self.out / "data" / "latest.json").read_bytes())["records"]
+        self.assertNotEqual(audit["snapshot_id"], baseline["snapshot_id"])
+        self.assertEqual(records[0]["hardware"], {"gpu": "RTX 4070", "cpu": "Intel Core i7-13700KF",
+                         "ram_gb": 32, "vram_gb": None, "memory_type": None, "source": "declared",
+                         "operator_confirmed_fields": ["cpu", "ram_gb"]})
+        self.assertEqual(records[1], original["two"])
+        self.assertEqual({k: v for k, v in records[0].items() if k != "hardware"},
+                         {k: v for k, v in original["one"].items() if k != "hardware"})
+        self.assertEqual(audit["operator_confirmed_hardware_fields"], {"one": ["cpu", "ram_gb"]})
+        self.assertEqual(audit["hardware_overlay_sha256"], hashlib.sha256(overlay_before).hexdigest())
+        self.assertEqual(self.registry.read_bytes(), before)
+        self.assertEqual(overlay.read_bytes(), overlay_before)
+
+    def test_hardware_overlay_rejects_conflicts_and_invalid_mapping(self):
+        self.source([sample("one", hardware={"gpu": "RTX 4070", "ram_gb": 32}),
+                     sample("failed", execution={"status": "adapter_error"})])
+        self.run_release()
+        before = self.release_files()
+        audit_before = self.audit_path.read_bytes()
+        cases = [({"one": {"ram_gb": 64}}, None, "overlay conflict"),
+                 ({"unknown": {"ram_gb": 32}}, None, "unknown or ineligible"),
+                 ({"failed": {"ram_gb": 32}}, None, "unknown or ineligible"),
+                 ({"one": {"host": "machine"}}, None, "Invalid hardware overlay fields"),
+                 ({"one": {"cpu": None}}, None, "Invalid hardware overlay value"),
+                 ({"one": {"ram_gb": True}}, None, "Invalid hardware overlay value"),
+                 ({"one": {"ram_gb": 32}}, "0" * 64, "hash mismatch")]
+        for mapping, digest, error in cases:
+            with self.subTest(error=error):
+                overlay = self.overlay(mapping, digest)
+                with self.assertRaisesRegex(ValueError, error):
+                    self.run_release(hardware_overlay=overlay)
+                self.assertEqual(self.release_files(), before)
+                self.assertEqual(self.audit_path.read_bytes(), audit_before)
+
+    def test_overlay_privacy_failure_preserves_release(self):
+        self.source([sample("one")])
+        self.run_release()
+        before = self.release_files()
+        overlay = self.overlay({"one": {"cpu": "person@example.com"}})
+        with self.assertRaisesRegex(ValueError, "Privacy audit failed"):
+            self.run_release(hardware_overlay=overlay)
+        self.assertEqual(self.release_files(), before)
+        audit = json.loads(self.audit_path.read_bytes())
+        self.assertEqual(audit["privacy_violations"], [
+            {"field": "hardware.cpu", "reason": "Possible private value", "record_index": 1}])
+        self.assertNotIn(b"person@example.com", self.audit_path.read_bytes())
+
     @unittest.skipUnless(os.environ.get("REPLAYBENCH_ACCEPTANCE_EXPORT"), "Set REPLAYBENCH_ACCEPTANCE_EXPORT to run")
     def test_frozen_acceptance_export(self):
         self.registry = Path(os.environ["REPLAYBENCH_ACCEPTANCE_EXPORT"])
@@ -202,26 +275,43 @@ class PublisherTests(unittest.TestCase):
         data = self.out / "data"
         latest = (data / "latest.json").read_bytes()
         records = json.loads(latest)["records"]
-        expected = {r["run_id"]: r for r in source["records"] if r["track"] in ("direct_model", "pi_agent")}
+        expected = {r["run_id"]: r for r in source["records"] if r["track"] in ("direct_model", "pi_agent")
+                    and r["execution"]["status"] in ELIGIBLE_STATUSES}
         self.assertEqual(set(expected), {r["run_id"] for r in records})
         self.assertEqual(audit["input_record_count"], 61)
         self.assertEqual(audit["excluded_invalid_archive_count"], 1)
         self.assertEqual(audit["excluded_track_distribution"], {"self_test": 16})
-        self.assertEqual(Counter(r["track"] for r in records), {"direct_model": 38, "pi_agent": 7})
+        self.assertEqual(audit["excluded_status_distribution"], {"adapter_error": 5})
+        self.assertEqual(Counter(r["track"] for r in records), {"direct_model": 33, "pi_agent": 7})
         self.assertEqual(Counter(r["execution"]["status"] for r in records),
-                         {"completed": 30, "adapter_error": 5, "incomplete": 4, "output_limit": 3, "timeout": 3})
+                         {"completed": 30, "incomplete": 4, "output_limit": 3, "timeout": 3})
         scores = [r["result"]["score"] for r in records]
-        self.assertEqual((len(scores) - scores.count(None), scores.count(None), scores.count(0)), (30, 15, 4))
-        self.assertEqual(Counter(r["result"]["strict_pass"] for r in records), {True: 5, False: 25, None: 15})
+        self.assertEqual((len(scores) - scores.count(None), scores.count(None), scores.count(0)), (30, 10, 4))
+        self.assertEqual(Counter(r["result"]["strict_pass"] for r in records), {True: 5, False: 25, None: 10})
         for run in records:
             original = expected[run["run_id"]]
             self.assertEqual(run["result"]["score"], original["result"]["score"])
             self.assertEqual(run["result"]["strict_pass"], original["result"]["strict_pass"])
             self.assertEqual(run["execution"]["status"], original["execution"]["status"])
         self.assertEqual(sum(r["task"]["candidate"] for r in records), 18)
-        self.assertEqual(sum("subject_model_version_mismatch" in r["metadata_flags"] for r in records), 1)
+        self.assertEqual(sum("subject_model_version_mismatch" in r["metadata_flags"] for r in records), 0)
         self.assertEqual(self.registry.read_bytes(), raw)
         self.assertEqual(audit["public_data_sha256"], hashlib.sha256(latest).hexdigest())
+        overlay_path = os.environ.get("REPLAYBENCH_ACCEPTANCE_HARDWARE_OVERLAY")
+        if overlay_path:
+            enriched = self.run_release(hardware_overlay=Path(overlay_path))
+            revised = json.loads((data / "latest.json").read_bytes())["records"]
+            self.assertEqual(Counter(r["hardware"]["cpu"] for r in revised),
+                             {"Intel Core i7-13700KF": 38, "Intel Core i5-12400": 2})
+            self.assertEqual(Counter((r["hardware"]["ram_gb"], r["hardware"]["memory_type"]) for r in revised),
+                             {(32, "DDR5"): 38, (64, "DDR4"): 2})
+            self.assertEqual({(r["hardware"]["gpu"], r["hardware"]["vram_gb"]) for r in revised},
+                             {("RTX 4070", 12)})
+            self.assertEqual([{k: v for k, v in r.items() if k != "hardware"} for r in revised],
+                             [{k: v for k, v in r.items() if k != "hardware"} for r in records])
+            self.assertEqual(enriched["privacy_violations"], [])
+            self.assertEqual(len(enriched["operator_confirmed_hardware_fields"]), 40)
+            self.assertEqual(self.registry.read_bytes(), raw)
 
 
 if __name__ == "__main__":

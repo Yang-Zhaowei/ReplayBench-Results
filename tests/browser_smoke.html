@@ -42,6 +42,11 @@ async function run() {
   doc.querySelector('input[aria-label="Select first-run for comparison"]').closest("tr").querySelector(".run-link").click();
   assert(doc.getElementById("detail").open && doc.getElementById("detail-content").textContent.includes("first-run"),
     "Run detail dialog did not open");
+  const hardwareDetail = doc.getElementById("detail-content").textContent;
+  assert(hardwareDetail.includes("Intel Core i7-13700KF") && hardwareDetail.includes("DDR5") &&
+    hardwareDetail.includes("Original hardware source") && hardwareDetail.includes("declared") &&
+    hardwareDetail.includes("Operator-confirmed fields") && hardwareDetail.includes("cpu, memory_type, ram_gb"),
+    "operator-confirmed hardware detail is missing");
   doc.querySelector("#detail form button").click();
   for (const id of ["first-run", "second-run"]) {
     doc.querySelector('input[aria-label="Select ' + id + ' for comparison"]').click();
@@ -58,6 +63,10 @@ async function run() {
   picker.dispatchEvent(new Event("change"));
   await until(() => doc.getElementById("count").textContent === "1 of 1 Runs");
   assert(doc.getElementById("runs").textContent.includes("historical-run"), "historical snapshot did not load");
+  doc.querySelector(".run-link").click();
+  assert(doc.getElementById("detail-content").textContent.includes("Operator-confirmed fieldsUnknown"),
+    "legacy snapshot hardware provenance should remain unknown");
+  doc.querySelector("#detail form button").click();
   picker.value = "";
   picker.dispatchEvent(new Event("change"));
   await until(() => doc.getElementById("count").textContent === "2 of 2 Runs");
